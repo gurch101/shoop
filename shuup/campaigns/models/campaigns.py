@@ -10,6 +10,7 @@ import string
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.utils.encoding import force_text
 from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _
@@ -22,6 +23,12 @@ from shuup.campaigns.consts import (
 )
 from shuup.campaigns.models.basket_conditions import (
     CategoryProductsBasketCondition, ProductsInBasketCondition
+)
+from shuup.campaigns.models.basket_line_effects import (
+    DiscountFromCategoryProducts, DiscountFromProduct, FreeProductLine
+)
+from shuup.campaigns.models.catalog_filters import (
+    CategoryFilter, ProductFilter, ProductTypeFilter
 )
 from shuup.campaigns.utils import get_product_ids_and_quantities
 from shuup.core import cache
@@ -117,6 +124,37 @@ class CatalogCampaign(Campaign):
         return True
 
     @classmethod
+    def get_for_product(cls, product):
+        # TODO: offload these checks to the respective condition/effect classes
+        product_type_filters = (
+            ProductTypeFilter.objects.filter(product_types__id=product.type_id).values_list("id", flat=True)
+        )
+        product_filters = (
+            ProductFilter.objects.filter(products__shop_products__id=product.id).values_list("id", flat=True)
+        )
+        category_filters = (
+            CategoryFilter.objects.filter(categories__shop_products__product_id=product.id).values_list("id", flat=True)
+        )
+        # All filters that DON'T match the product in some way - note we want to include campaigns if the conditions
+        # have nothing to do with products (ie a campaign with only a contact rule)
+        excluded_product_type_filters = (
+            ProductTypeFilter.objects.exclude(id__in=product_type_filters).values_list("id", flat=True)
+        )
+        excluded_product_filters = (
+            ProductFilter.objects.exclude(id__in=product_filters).values_list("id", flat=True)
+        )
+        excluded_category_filters = (
+            CategoryFilter.objects.exclude(id__in=category_filters).values_list("id", flat=True)
+        )
+        return (
+            cls.objects
+            .filter(active=True)
+            .exclude(filters__id_in=excluded_product_type_filters)
+            .exclude(filters__id_in=excluded_product_filters)
+            .exclude(filters__id_in=excluded_category_filters)
+        )
+
+    @classmethod
     def get_matching(cls, context, shop_product):
         prod_ctx_cache_elements = dict(
             customer=context.customer.pk or 0,
@@ -179,6 +217,52 @@ class BasketCampaign(Campaign):
 
     def __str__(self):
         return force_text(_("Basket Campaign: %(name)s" % dict(name=self.name)))
+
+    @classmethod
+    def get_for_product(cls, product):
+        # TODO: offload these checks to the respective condition/effect classes
+        products_in_basket_conditions = (
+            ProductsInBasketCondition.objects.filter(
+                products__id=product.id).values_list("id", flat=True)
+        )
+        category_products_basket_conditions = (
+            CategoryProductsBasketCondition.objects.filter(
+                category__shop_products__product_id=product.id).values_list("id", flat=True)
+        )
+        excluded_products_in_basket_conditions = (
+             ProductsInBasketCondition.objects.exclude(
+                id__in=products_in_basket_conditions).values_list("id", flat=True)
+        )
+        excluded_category_products_basket_conditions = (
+            CategoryProductsBasketCondition.objects.exclude(
+                id__in=category_products_basket_conditions).values_list("id", flat=True)
+        )
+        effects_q = Q(
+            line_effects__id__in=(
+                DiscountFromProduct.objects.filter(
+                    products__id=product.id).values_list("id", flat=True)
+            )
+        )
+        effects_q |= Q(
+            line_effects__id__in=(
+                DiscountFromCategoryProducts.objects.filter(
+                    category__shop_products__product_id=product.id).values_list("id", flat=True)
+            )
+        )
+        effects_q |= Q(
+            line_effects__id__in=(
+                FreeProductLine.objects.filter(
+                    products__id=product.id).values_list("id", flat=True)
+            )
+        )
+        queryset = (
+            cls.objects
+            .filter(active=True)
+            .exclude(conditions__id__in=excluded_products_in_basket_conditions)
+            .exclude(conditions__id__in=excluded_category_products_basket_conditions)
+        )
+        queryset |= cls.objects.filter(Q(active=True) & effects_q)
+        return queryset.distinct()
 
     @classmethod
     def get_matching(cls, basket, lines):

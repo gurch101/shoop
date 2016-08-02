@@ -22,7 +22,7 @@ from shuup.campaigns.models.product_effects import (
     ProductDiscountAmount, ProductDiscountPercentage
 )
 from shuup.core.models import Category
-from shuup.testing.factories import create_product, get_default_customer_group
+from shuup.testing.factories import create_product, get_default_customer_group, get_default_shop
 from shuup.testing.utils import apply_request_middleware
 from shuup_tests.campaigns import initialize_test
 
@@ -394,3 +394,26 @@ def test_admin_order_with_campaign(rf, admin_user):
     response = OrderEditView.as_view()(request)
     data = json.loads(response.content.decode("utf8"))
     assert decimal.Decimal(data['unitPrice']['value']) == shop.create_price(10).value
+
+
+@pytest.mark.django_db
+def test_product_catalog_campaigns():
+    shop = get_default_shop()
+    product = create_product("test", shop, default_price=20)
+    shop_product = product.get_shop_instance(shop)
+    cat = Category.objects.create(name="test")
+    campaign = CatalogCampaign.objects.create(shop=shop, name="test", active=True)
+
+    # no rules
+    assert CatalogCampaign.get_for_product(product).count() == 1
+
+    # category filter that doesn't match
+    cat_filter = CategoryFilter.objects.create()
+    cat_filter.categories.add(cat)
+    campaign.filters.add(cat_filter)
+    assert CatalogCampaign.get_for_product(product).count() == 0
+
+    # category filter that matches
+    shop_product.categories.add(cat)
+    assert CatalogCampaign.get_for_product(product).count() == 1
+

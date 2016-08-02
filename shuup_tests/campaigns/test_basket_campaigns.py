@@ -11,7 +11,7 @@ from django.db import IntegrityError
 
 from shuup.campaigns.admin_module.forms import BasketCampaignForm
 from shuup.campaigns.models.basket_conditions import (
-    BasketTotalAmountCondition, BasketTotalProductAmountCondition
+    BasketTotalAmountCondition, BasketTotalProductAmountCondition, CategoryProductsBasketCondition
 )
 from shuup.campaigns.models.basket_effects import (
     BasketDiscountAmount, BasketDiscountPercentage
@@ -19,13 +19,14 @@ from shuup.campaigns.models.basket_effects import (
 from shuup.campaigns.models.campaigns import (
     BasketCampaign, Coupon, CouponUsage
 )
-from shuup.core.models import OrderLineType
+from shuup.campaigns.models.basket_line_effects import DiscountFromCategoryProducts
+from shuup.core.models import OrderLineType, Category
 from shuup.core.order_creator import OrderCreator
 from shuup.front.basket import get_basket
 from shuup.front.basket.commands import handle_add_campaign_code
 from shuup.testing.factories import (
     create_product, get_default_product, get_default_supplier,
-    get_shipping_method
+    get_shipping_method, get_default_shop
 )
 from shuup_tests.campaigns import initialize_test
 from shuup_tests.core.test_order_creator import seed_source
@@ -311,3 +312,35 @@ def test_coupon_uniqueness(rf):
     with pytest.raises(IntegrityError):
         second_campaign.coupon = coupon
         second_campaign.save()
+
+
+@pytest.mark.django_db
+def test_product_basket_campaigns():
+    shop = get_default_shop()
+    product = create_product("test", shop, default_price=20)
+    shop_product = product.get_shop_instance(shop)
+    cat = Category.objects.create(name="test")
+    cat2 = Category.objects.create(name="test2")
+    campaign = BasketCampaign.objects.create(active=True, shop=shop, name="test")
+
+    # no rules
+    assert BasketCampaign.get_for_product(product).count() == 1
+
+    # category condition that doesn't match
+    cat_condition = CategoryProductsBasketCondition.objects.create(category=cat)
+    campaign.conditions.add(cat_condition)
+    assert BasketCampaign.get_for_product(product).count() == 0
+
+    # category condition that matches
+    shop_product.categories.add(cat)
+    assert BasketCampaign.get_for_product(product).count() == 1
+
+    # category effect that doesn't match
+    effect = DiscountFromCategoryProducts.objects.create(campaign=campaign, category=cat)
+    shop_product.categories.remove(cat)
+    campaign.line_effects.add(effect)
+    assert BasketCampaign.get_for_product(product).count() == 0
+
+    # category effect and condition that matches
+    shop_product.categories.add(cat)
+    assert BasketCampaign.get_for_product(product).count() == 1
