@@ -114,6 +114,9 @@ def datetime(value, kind="datetime", format="medium", tz=True):
 
     locale = get_current_babel_locale()
 
+    if value is None:
+        return ""
+
     if type(value) is date:  # Not using isinstance, since `datetime`s are `date` too.
         # We can't do any TZ manipulation for dates, so just use `format_date` always
         return format_date(value, format=format, locale=locale)
