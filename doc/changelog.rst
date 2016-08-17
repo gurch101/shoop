@@ -22,6 +22,7 @@ Localization
 Admin
 ~~~~~
 
+- Fix order address rendering when address is null
 - Show fewer pagination links for picotable list views
 - Product edit: Convert collapsed sections into tabs
 - Increment quantity when quick adding products with existing lines in order creator
@@ -34,6 +35,7 @@ Addons
 Front
 ~~~~~
 
+- Fix password recovery form bug with invalid email
 - Show order reconfirmation error if product orderability changes on order
   confirmation
 - Exclude unorderable line items from basket
